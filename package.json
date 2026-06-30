@@ -1,0 +1,25 @@
+{
+  "name": "gotra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Gotra — Go-native tunneling & local-development cloud platform with an AI debugging layer.",
+  "packageManager": "pnpm@10.28.0",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down",
+    "api:dev": "cd services && go run ./cmd/api",
+    "gateway:dev": "cd services && go run ./cmd/gateway",
+    "migrate:up": "cd services && go run ./cmd/api migrate up",
+    "migrate:down": "cd services && go run ./cmd/api migrate down"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

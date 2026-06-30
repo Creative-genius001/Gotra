@@ -1,0 +1,18 @@
+# Run before rolling out a new api/gateway version: kubectl apply -f 10-migrate-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gotra-migrate
+  namespace: gotra
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: ghcr.io/gotra/gotra-api:latest
+          args: ["migrate", "up"]
+          envFrom:
+            - configMapRef: { name: gotra-config }
+            - secretRef: { name: gotra-secrets }

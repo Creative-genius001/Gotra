@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (dark is the default theme for Gotra). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Gotra design tokens — purple-first system from the Frontend & Design Bible.
+ * Surfaces are neutral; purple is reserved for CTAs, accents and AI surfaces.
+ */
+@theme {
+  --color-purple-50: #f5f3ff;
+  --color-purple-100: #ede9fe;
+  --color-purple-200: #ddd6fe;
+  --color-purple-300: #c4b5fd;
+  --color-purple-400: #a78bfa;
+  --color-purple-500: #8b5cf6;
+  --color-purple-600: #7c3aed;
+  --color-purple-700: #6d28d9;
+  --color-purple-800: #5b21b6;
+  --color-purple-900: #4c1d95;
+  --color-purple-950: #2e1065;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+
+  --font-sans: "General Sans", "Inter", system-ui, sans-serif;
+}
+
+/* Semantic surface tokens, resolved per theme. */
+:root {
+  --background: #ffffff;
+  --background-elevated: #f8fafc;
+  --card: #ffffff;
+  --card-elevated: #f1f5f9;
+  --border: #e2e8f0;
+  --foreground: #0f172a;
+  --muted-foreground: #64748b;
+  --primary: #7c3aed;
+  --primary-foreground: #ffffff;
+}
+
+.dark {
+  --background: #0a0a0f;
+  --background-elevated: #111118;
+  --card: #14141c;
+  --card-elevated: #1c1c27;
+  --border: #262633;
+  --foreground: #f8fafc;
+  --muted-foreground: #94a3b8;
+  --primary: #8b5cf6;
+  --primary-foreground: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-background-elevated: var(--background-elevated);
+  --color-card: var(--card);
+  --color-card-elevated: var(--card-elevated);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Brand gradient utility (deep purple → electric purple). */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #a855f7 100%);
+}
+.text-brand-gradient {
+  background-image: linear-gradient(135deg, #a78bfa 0%, #c084fc 50%, #e879f9 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}

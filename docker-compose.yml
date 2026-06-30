@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gotra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gotra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gotra}
+      POSTGRES_DB: ${POSTGRES_DB:-gotra}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - gotra-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gotra}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: gotra-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - gotra-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional analytics store. Enable by setting CLICKHOUSE_URL in your .env
+  # (e.g. clickhouse://gotra:gotra@localhost:9000/gotra) and starting this with
+  # the "analytics" profile: docker compose --profile analytics up -d
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    container_name: gotra-clickhouse
+    profiles: ["analytics"]
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: gotra
+      CLICKHOUSE_USER: gotra
+      CLICKHOUSE_PASSWORD: gotra
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP
+      - "9000:9000"  # native protocol
+    volumes:
+      - gotra-clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+volumes:
+  gotra-pg-data:
+  gotra-redis-data:
+  gotra-clickhouse-data:

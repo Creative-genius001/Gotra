@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gotra
+---
+# Non-secret configuration. Point these at your managed Postgres/Redis/ClickHouse.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gotra-config
+  namespace: gotra
+data:
+  APP_ENV: "production"
+  APP_BASE_URL: "https://app.gotra.dev"
+  API_HOST: "0.0.0.0"
+  API_PORT: "8080"
+  GATEWAY_PORT: "8081"
+  TUNNEL_BASE_DOMAIN: "tunnels.gotra.dev"
+  GATEWAY_AUTOCERT_ENABLED: "true"
+  GATEWAY_AUTOCERT_EMAIL: "ops@gotra.dev"
+  GATEWAY_AUTOCERT_CACHE_DIR: "/var/lib/gotra/autocert"
+  AI_PRIMARY_PROVIDER: "gemini"
+  AI_SECONDARY_PROVIDER: "claude"
+  NEXT_PUBLIC_API_URL: "https://api.gotra.dev"
+---
+# Template — create the real Secret out-of-band (sealed-secrets/SOPS/etc).
+# kubectl -n gotra create secret generic gotra-secrets \
+#   --from-literal=DATABASE_URL=... --from-literal=REDIS_URL=... \
+#   --from-literal=JWT_SECRET=... --from-literal=STRIPE_SECRET_KEY=... ...
+apiVersion: v1
+kind: Secret
+metadata:
+  name: gotra-secrets
+  namespace: gotra
+type: Opaque
+stringData:
+  DATABASE_URL: "postgres://gotra:CHANGE_ME@postgres:5432/gotra?sslmode=require"
+  REDIS_URL: "redis://redis:6379/0"
+  CLICKHOUSE_URL: ""
+  JWT_SECRET: "CHANGE_ME"
+  GEMINI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  STRIPE_SECRET_KEY: ""
+  STRIPE_WEBHOOK_SECRET: ""

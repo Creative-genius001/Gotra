@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Mirrors the Backend Bible CI stages: Lint → Test → Security Scan → Build.
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: services/go.sum
+
+      - name: Lint (go vet)
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Security scan (govulncheck)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... || true   # non-blocking until baseline is clean
+
+      - name: Build
+        run: |
+          go build -o /dev/null ./cmd/api
+          go build -o /dev/null ./cmd/gateway
+          go build -o /dev/null ./cmd/agent
+
+  integration:
+    name: Integration (Postgres)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gotra
+          POSTGRES_PASSWORD: gotra
+          POSTGRES_DB: gotra_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gotra"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: services/go.sum
+      - name: Integration tests
+        env:
+          TEST_DATABASE_URL: postgres://gotra:gotra@localhost:5432/gotra_test?sslmode=disable
+        run: go test -tags=integration ./internal/integration/...
+
+  web:
+    name: Web (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --filter @gotra/web typecheck
+
+      - name: Build
+        run: pnpm --filter @gotra/web build
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8080
+
+  # Deploy + smoke-test stages run on main only; fill in once a target exists.
+  # deploy:
+  #   needs: [backend, web]
+  #   if: github.ref == 'refs/heads/main'
+  #   runs-on: ubuntu-latest
+  #   steps: [...]
