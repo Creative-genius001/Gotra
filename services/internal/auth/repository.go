@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	errorMap "github.com/gotra/gotra/utils/error"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,22 +46,24 @@ func (r *Repository) CreateUser(ctx context.Context, q Querier, email, name stri
 		email, name, emailVerified,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.EmailVerified, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
-		return nil, err
+		return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create User", "unable to create user")
 	}
 	return u, nil
 }
 
-// GetUserByEmail looks up a user by (case-insensitive) email.
 func (r *Repository) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	u := &User{}
 	err := r.pool.QueryRow(ctx,
 		`SELECT id, email, name, COALESCE(avatar_url, ''), email_verified, last_login_at, created_at, updated_at
 		 FROM users WHERE lower(email) = lower($1)`, email,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.EmailVerified, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	if err == nil {
+		return u, nil
 	}
-	return u, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errorMap.New(errorMap.CodeInvalidInput, "Auth Repository: Get User By Email", "invalid credentials")
+	}
+	return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Get User By Email", "unable to retireve user")
 }
 
 // GetUserByID looks up a user by id.
@@ -70,16 +73,18 @@ func (r *Repository) GetUserByID(ctx context.Context, id uuid.UUID) (*User, erro
 		`SELECT id, email, name, COALESCE(avatar_url, ''), email_verified, last_login_at, created_at, updated_at
 		 FROM users WHERE id = $1`, id,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.EmailVerified, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	if err == nil {
+		return u, nil
 	}
-	return u, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errorMap.New(errorMap.CodeInvalidInput, "Auth Repository: Get User By ID", "invalid credentials")
+	}
+	return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Get User By ID", "unable to retrieve user")
 }
 
-// TouchLastLogin updates last_login_at to now.
 func (r *Repository) TouchLastLogin(ctx context.Context, userID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = $1`, userID)
-	return err
+	return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Touch Last Login", "unable to update last login timestamp")
 }
 
 // --- Auth providers ---------------------------------------------------------
@@ -101,7 +106,10 @@ func (r *Repository) CreateOAuthProvider(ctx context.Context, q Querier, userID 
 		 VALUES ($1, $2, $3, $4, $5)`,
 		userID, string(provider), providerUserID, email, metadata,
 	)
-	return err
+	if err != nil {
+		return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Oauth Provider", "error creating Oauth provider")
+	}
+	return nil
 }
 
 // GetPasswordHash returns the stored Argon2id hash for a user's password provider.
@@ -111,10 +119,13 @@ func (r *Repository) GetPasswordHash(ctx context.Context, userID uuid.UUID) (str
 		`SELECT COALESCE(password_hash, '') FROM user_auth_providers
 		 WHERE user_id = $1 AND provider = 'password'`, userID,
 	).Scan(&hash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+	if err == nil {
+		return hash, nil
 	}
-	return hash, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", errorMap.New(errorMap.CodeInvalidInput, "Auth Repository: Get PasswordHash", ErrInvalidCredentials.Error())
+	}
+	return "", errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Get PasswordHash", "unable to retrieve password hash")
 }
 
 // GetUserByProvider finds the user linked to an external provider identity.
@@ -128,9 +139,9 @@ func (r *Repository) GetUserByProvider(ctx context.Context, provider Provider, p
 		string(provider), providerUserID,
 	).Scan(&u.ID, &u.Email, &u.Name, &u.AvatarURL, &u.EmailVerified, &u.LastLoginAt, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, errorMap.New(errorMap.CodeNotFound, "Auth Repository: Get User By Provider", ErrNotFound.Error())
 	}
-	return u, err
+	return u, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Get User By Provider", "unable to retrieve user by provider")
 }
 
 // --- Sessions ---------------------------------------------------------------
@@ -143,7 +154,10 @@ func (r *Repository) CreateSession(ctx context.Context, q Querier, userID uuid.U
 		 VALUES ($1, $2, $3, $4, $5) RETURNING id`,
 		userID, refreshHash, ip, ua, expiresAt,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return uuid.Nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Session", "unable to create session")
+	}
+	return id, nil
 }
 
 // GetActiveSessionByHash returns a non-revoked, non-expired session for a hash.
@@ -188,7 +202,10 @@ func (r *Repository) CreateWorkspace(ctx context.Context, q Querier, ownerID uui
 		`INSERT INTO workspaces (owner_id, name, slug, is_personal) VALUES ($1, $2, $3, $4) RETURNING id`,
 		ownerID, name, slug, personal,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return uuid.Nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Workspace", "unable to create workspace")
+	}
+	return id, nil
 }
 
 // CreateProject inserts a project.
@@ -198,7 +215,10 @@ func (r *Repository) CreateProject(ctx context.Context, q Querier, workspaceID, 
 		`INSERT INTO projects (workspace_id, owner_id, name, slug) VALUES ($1, $2, $3, $4) RETURNING id`,
 		workspaceID, ownerID, name, slug,
 	).Scan(&id)
-	return id, err
+	if err != nil {
+		return uuid.Nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Project", "unable to create project")
+	}
+	return id, nil
 }
 
 // CreateProjectMember adds a member with a role to a project.
@@ -207,7 +227,10 @@ func (r *Repository) CreateProjectMember(ctx context.Context, q Querier, project
 		`INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, $3)`,
 		projectID, userID, role,
 	)
-	return err
+	if err != nil {
+		return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Project Member", "unable to create project member")
+	}
+	return nil
 }
 
 // CreateAPIKey stores a hashed API key for a project.
@@ -216,7 +239,10 @@ func (r *Repository) CreateAPIKey(ctx context.Context, q Querier, projectID uuid
 		`INSERT INTO api_keys (project_id, name, key_hash) VALUES ($1, $2, $3)`,
 		projectID, name, keyHash,
 	)
-	return err
+	if err != nil {
+		return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create API Key", "unable to create API key")
+	}
+	return nil
 }
 
 // --- Email verification & password reset ------------------------------------
@@ -227,7 +253,7 @@ func (r *Repository) CreateEmailVerification(ctx context.Context, q Querier, use
 		`INSERT INTO email_verifications (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
 		userID, tokenHash, expiresAt,
 	)
-	return err
+	return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Email Verification", "unable to create email verification")
 }
 
 // ConsumeEmailVerification marks a valid token used and returns its user id.
@@ -239,16 +265,19 @@ func (r *Repository) ConsumeEmailVerification(ctx context.Context, q Querier, to
 		 WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
 		 RETURNING user_id`, tokenHash,
 	).Scan(&userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return uuid.Nil, ErrNotFound
+	if err == nil {
+		return userID, nil
 	}
-	return userID, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, errorMap.New(errorMap.CodeNotFound, "Auth Repository: Consume Email Verification", ErrNotFound.Error())
+	}
+	return uuid.Nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Consume Email Verification", "unable to consume email verification")
 }
 
 // SetUserEmailVerified flags a user's email as verified.
 func (r *Repository) SetUserEmailVerified(ctx context.Context, q Querier, userID uuid.UUID) error {
 	_, err := q.Exec(ctx, `UPDATE users SET email_verified = TRUE, updated_at = now() WHERE id = $1`, userID)
-	return err
+	return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Set User Email Verified", "unable to verify user email")
 }
 
 // CreatePasswordReset stores a hashed password-reset token.
@@ -257,7 +286,7 @@ func (r *Repository) CreatePasswordReset(ctx context.Context, q Querier, userID 
 		`INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
 		userID, tokenHash, expiresAt,
 	)
-	return err
+	return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Create Password Reset", "unable to create password reset")
 }
 
 // ConsumePasswordReset marks a valid token used and returns its user id.
@@ -282,7 +311,7 @@ func (r *Repository) UpsertPasswordHash(ctx context.Context, q Querier, userID u
 		 WHERE user_id = $1 AND provider = 'password'`, userID, hash,
 	)
 	if err != nil {
-		return err
+		return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Upsert Password Hash", "unable to update password hash")
 	}
 	if tag.RowsAffected() == 0 {
 		return r.CreatePasswordProvider(ctx, q, userID, email, hash)
@@ -295,7 +324,7 @@ func (r *Repository) UpsertPasswordHash(ctx context.Context, q Querier, userID u
 func (r *Repository) RevokeAllUserSessions(ctx context.Context, q Querier, userID uuid.UUID) error {
 	_, err := q.Exec(ctx,
 		`UPDATE sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL`, userID)
-	return err
+	return errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Revoke All User Sessions", "unable to revoke user sessions")
 }
 
 // GetPrimaryWorkspace returns the user's personal workspace and their role in it.
@@ -308,8 +337,11 @@ func (r *Repository) GetPrimaryWorkspace(ctx context.Context, userID uuid.UUID) 
 		 ORDER BY is_personal DESC, created_at ASC
 		 LIMIT 1`, userID,
 	).Scan(&pw.WorkspaceID, &pw.Role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+	if err == nil {
+		return pw, nil
 	}
-	return pw, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errorMap.New(errorMap.CodeNotFound, "Auth Repository: Get Primary Workspace", ErrNotFound.Error())
+	}
+	return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Repository: Get Primary Workspace", "unable to retrieve primary workspace")
 }

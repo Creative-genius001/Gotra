@@ -15,7 +15,7 @@ import (
 )
 
 // ErrNotFound indicates the request does not exist or is not accessible.
-var ErrNotFound = errors.New("requests: not found")
+var ErrNotFound = errors.New("requests not found")
 
 // Capture is a captured request/response pair to persist.
 type Capture struct {

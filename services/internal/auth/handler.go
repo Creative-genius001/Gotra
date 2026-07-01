@@ -14,13 +14,14 @@ import (
 	"github.com/gotra/gotra/internal/config"
 	"github.com/gotra/gotra/pkg/cache"
 	"github.com/gotra/gotra/pkg/database"
+	"github.com/gotra/gotra/pkg/httpx"
 	"github.com/gotra/gotra/pkg/middleware"
 	"github.com/gotra/gotra/pkg/security"
+	errorMap "github.com/gotra/gotra/utils/error"
 )
 
 const refreshCookieName = "gotra_refresh"
 
-// Handler holds the dependencies for auth HTTP endpoints.
 type Handler struct {
 	cfg     *config.Config
 	cache   *cache.Cache
@@ -28,7 +29,6 @@ type Handler struct {
 	oauth   *OAuthManager
 }
 
-// NewHandler constructs an auth Handler with its service and OAuth manager.
 func NewHandler(cfg *config.Config, db *database.DB, c *cache.Cache, tm *security.TokenManager, log *slog.Logger) *Handler {
 	repo := NewRepository(db.Pool)
 	mailer := NewLogMailer(cfg, log)
@@ -40,7 +40,6 @@ func NewHandler(cfg *config.Config, db *database.DB, c *cache.Cache, tm *securit
 	}
 }
 
-// RegisterRoutes mounts the public auth endpoints.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	a := rg.Group("/auth")
 	{
@@ -63,12 +62,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	}
 }
 
-// RegisterProtected mounts authenticated auth endpoints (run behind Auth mw).
 func (h *Handler) RegisterProtected(rg *gin.RouterGroup) {
 	rg.GET("/auth/me", h.me)
 }
-
-// --- DTOs -------------------------------------------------------------------
 
 type registerRequest struct {
 	Email    string `json:"email" binding:"required,email"`
@@ -108,12 +104,12 @@ func (h *Handler) register(c *gin.Context) {
 func (h *Handler) login(c *gin.Context) {
 	var req loginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		badRequest(c, err)
+		httpx.BadRequest(c, errorMap.New(errorMap.CodeInvalidInput, "login handler", errorMap.ErrInvalidInput.Error()))
 		return
 	}
 	res, err := h.service.Login(c.Request.Context(), req.Email, req.Password, clientInfo(c))
 	if err != nil {
-		h.writeError(c, err)
+		httpx.MapError(c, err)
 		return
 	}
 	h.respondAuth(c, res, http.StatusOK)
@@ -136,7 +132,7 @@ func (h *Handler) refresh(c *gin.Context) {
 
 	res, err := h.service.Refresh(c.Request.Context(), token, clientInfo(c))
 	if err != nil {
-		h.writeError(c, err)
+		httpx.MapError(c, err)
 		return
 	}
 	h.respondAuth(c, res, http.StatusOK)
@@ -223,22 +219,22 @@ func (h *Handler) me(c *gin.Context) {
 func (h *Handler) oauthStart(provider Provider) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !h.oauth.Configured(provider) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": string(provider) + " oauth is not configured"})
+			httpx.ServiceUnavailable(c, errorMap.New(errorMap.CodeUnavailable, "Auth Handler: Oauth Config", string(provider)+" oauth is not configured"))
 			return
 		}
 		state, err := security.GenerateOpaqueToken(24)
 		if err != nil {
-			h.writeError(c, err)
+			httpx.InternalServerError(c, errorMap.New(errorMap.CodeInternal, "Auth Handler: Generate Opaque Tokens", err.Error()))
 			return
 		}
-		// Persist state for CSRF protection (10 minute TTL).
+
 		if err := h.cache.Client.Set(c.Request.Context(), oauthStateKey(state), string(provider), 10*time.Minute).Err(); err != nil {
-			h.writeError(c, err)
+			httpx.InternalServerError(c, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Handler: Set Cache", "redis error"))
 			return
 		}
 		authURL, err := h.oauth.AuthCodeURL(c.Request.Context(), provider, state)
 		if err != nil {
-			h.writeError(c, err)
+			httpx.MapError(c, err)
 			return
 		}
 		c.Redirect(http.StatusTemporaryRedirect, authURL)
@@ -251,36 +247,33 @@ func (h *Handler) oauthCallback(provider Provider) gin.HandlerFunc {
 		state := c.Query("state")
 		code := c.Query("code")
 		if state == "" || code == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "missing code or state"})
+			httpx.MapError(c, errorMap.New(errorMap.CodeInvalidInput, "Auth Handler: Oauth Callback", "missing code or state"))
 			return
 		}
 
-		// Validate and consume state (single-use).
 		stored, err := h.cache.Client.GetDel(ctx, oauthStateKey(state)).Result()
 		if err != nil || stored != string(provider) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid oauth state"})
+			httpx.MapError(c, errorMap.New(errorMap.CodeInvalidInput, "Auth Handler: Get Oauth State", "invalid oauth state"))
 			return
 		}
 
 		accessToken, err := h.oauth.Exchange(ctx, provider, code)
 		if err != nil {
-			h.writeError(c, err)
+			httpx.MapError(c, err)
 			return
 		}
 		profile, err := h.oauth.FetchProfile(ctx, provider, accessToken)
 		if err != nil {
-			h.writeError(c, err)
+			httpx.MapError(c, err)
 			return
 		}
 
 		res, err := h.service.AuthenticateOAuth(ctx, provider, profile, clientInfo(c))
 		if err != nil {
-			h.writeError(c, err)
+			httpx.MapError(c, err)
 			return
 		}
 
-		// Set the refresh cookie and hand off to the frontend, which exchanges
-		// it for an access token via /auth/refresh.
 		h.setRefreshCookie(c, res.RefreshToken)
 		c.Redirect(http.StatusTemporaryRedirect, h.cfg.AppBaseURL+"/dashboard")
 	}

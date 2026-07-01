@@ -7,9 +7,15 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Code int
+
+var (
+	ErrInvalidInput = errors.New("invalid payload")
+)
 
 const (
 	CodeUnknown       Code = iota // unexpected / unclassified
@@ -216,13 +222,13 @@ type ErrorResponse struct {
 	Fields  map[string]string `json:"fields,omitempty"`
 }
 
-func ToHTTPResponse(err error) (int, ErrorResponse) {
+func ToHTTPResponse(c *gin.Context, err error) (int, ErrorResponse) {
+	c.Error(err)
 	var e *AppError
 	if errors.As(err, &e) {
 		return e.Code.HTTPStatus(), ErrorResponse{
 			Code:    e.Code.String(),
 			Message: e.Message,
-			Fields:  e.Fields,
 		}
 	}
 	return http.StatusInternalServerError, ErrorResponse{

@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	errorMap "github.com/gotra/gotra/utils/error"
 )
 
 // Role represents an RBAC role. Per the bibles: Owner, Admin, Developer, Viewer.
@@ -71,7 +72,7 @@ func (tm *TokenManager) ParseAccessToken(tokenString string) (*Claims, error) {
 		return tm.secret, nil
 	})
 	if err != nil || !token.Valid {
-		return nil, ErrInvalidToken
+		return nil, errorMap.New(errorMap.CodeInvalidInput, "Jwt : Parse Token", ErrInvalidToken.Error())
 	}
 	return claims, nil
 }

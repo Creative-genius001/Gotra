@@ -15,4 +15,5 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/app /app
 USER nonroot:nonroot
 # Ports: api 8080, gateway 8081/443. Migrations are embedded in the api binary.
+EXPOSE 8080
 ENTRYPOINT ["/app"]

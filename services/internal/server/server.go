@@ -47,8 +47,12 @@ func New(cfg *config.Config, log *slog.Logger, db *database.DB, c *cache.Cache) 
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
-	engine.Use(gin.Recovery())
-	engine.Use(middleware.RequestID())
+	engine.Use(
+		middleware.RequestID(),
+		middleware.RequestLogger(log),
+		middleware.ErrorHandler(log),
+		middleware.Recovery(log),
+	)
 
 	tokens := security.NewTokenManager(cfg.JWTSecret, cfg.AccessTokenTTL)
 

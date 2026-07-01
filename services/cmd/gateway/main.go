@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -18,7 +19,15 @@ import (
 
 func main() {
 	cfg := config.Load()
-	log := logger.New(cfg.Env)
+	log, err := logger.New(logger.Config{
+		Environment: os.Getenv("APP_ENV"),
+		Level:       "debug",
+		Format:      "",
+	})
+	if err != nil {
+		log = slog.Default()
+	}
+	slog.SetDefault(log)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

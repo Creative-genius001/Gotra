@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,9 +17,16 @@ import (
 
 func main() {
 	cfg := config.Load()
-	log := logger.New(cfg.Env)
+	log, err := logger.New(logger.Config{
+		Environment: os.Getenv("APP_ENV"),
+		Level:       "debug",
+		Format:      "",
+	})
+	if err != nil {
+		log = slog.Default()
+	}
+	slog.SetDefault(log)
 
-	// Subcommand: migrations.
 	if len(os.Args) > 1 && os.Args[1] == "migrate" {
 		runMigrate(cfg, os.Args[2:])
 		return
@@ -49,7 +57,15 @@ func main() {
 }
 
 func runMigrate(cfg *config.Config, args []string) {
-	log := logger.New(cfg.Env)
+	log, err := logger.New(logger.Config{
+		Environment: cfg.Env,
+		Level:       "debug",
+		Format:      "",
+		AddSource:   false,
+	})
+	if err != nil {
+		log = slog.Default()
+	}
 	ctx := context.Background()
 
 	db, err := database.Connect(ctx, cfg.DatabaseURL)

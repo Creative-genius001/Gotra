@@ -11,15 +11,16 @@ import (
 
 	"github.com/gotra/gotra/internal/config"
 	"github.com/gotra/gotra/pkg/security"
+	errorMap "github.com/gotra/gotra/utils/error"
 )
 
 // Service-level sentinel errors, mapped to HTTP status codes by the handler.
 var (
-	ErrEmailTaken         = errors.New("auth: email already registered")
-	ErrInvalidCredentials = errors.New("auth: invalid credentials")
-	ErrWeakPassword       = errors.New("auth: password must be at least 8 characters")
-	ErrInvalidRefresh     = errors.New("auth: invalid or expired refresh token")
-	ErrInvalidToken       = errors.New("auth: invalid or expired token")
+	ErrEmailTaken         = errors.New("email already registered")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrWeakPassword       = errors.New("password must be at least 8 characters")
+	ErrInvalidRefresh     = errors.New("invalid or expired refresh token")
+	ErrInvalidToken       = errors.New("invalid or expired token")
 )
 
 // Token lifetimes for email verification and password reset.
@@ -119,23 +120,18 @@ func (s *Service) Login(ctx context.Context, email, password string, client Clie
 	email = normalizeEmail(email)
 
 	user, err := s.repo.GetUserByEmail(ctx, email)
-	if errors.Is(err, ErrNotFound) {
-		return nil, ErrInvalidCredentials
-	} else if err != nil {
+	if err != nil {
 		return nil, err
 	}
 
 	hash, err := s.repo.GetPasswordHash(ctx, user.ID)
-	if errors.Is(err, ErrNotFound) {
-		// User exists but has no password provider (OAuth-only account).
-		return nil, ErrInvalidCredentials
-	} else if err != nil {
+	if err != nil {
 		return nil, err
 	}
 
 	ok, err := security.VerifyPassword(password, hash)
 	if err != nil || !ok {
-		return nil, ErrInvalidCredentials
+		return nil, errorMap.New(errorMap.CodeInvalidInput, "Auth Service: Verify Password", ErrInvalidCredentials.Error())
 	}
 
 	_ = s.repo.TouchLastLogin(ctx, user.ID)
@@ -270,13 +266,7 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	return tx.Commit(ctx)
 }
 
-// AuthenticateOAuth resolves an external profile to a Gotra identity following
-// the Auth Bible provider-linking rules:
-//   - existing provider identity      → log in
-//   - existing user with matching email → link the new provider, then log in
-//   - otherwise                        → create a verified account and provision
 func (s *Service) AuthenticateOAuth(ctx context.Context, provider Provider, profile *OAuthProfile, client ClientInfo) (*Result, error) {
-	// 1. Known provider identity → straight login.
 	if user, err := s.repo.GetUserByProvider(ctx, provider, profile.ProviderUserID); err == nil {
 		_ = s.repo.TouchLastLogin(ctx, user.ID)
 		pw, perr := s.repo.GetPrimaryWorkspace(ctx, user.ID)
@@ -284,8 +274,8 @@ func (s *Service) AuthenticateOAuth(ctx context.Context, provider Provider, prof
 			return nil, perr
 		}
 		return s.issueTokens(ctx, user, pw.WorkspaceID, pw.Role, client)
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
+	} else if !errorMap.IsNotFound(err) {
+		return nil, errorMap.New(errorMap.CodeInternal, "Auth Service: Get User By Provider", "error retrieving user")
 	}
 
 	metadata, _ := json.Marshal(map[string]string{"name": profile.Name, "avatar_url": profile.AvatarURL})
@@ -303,7 +293,7 @@ func (s *Service) AuthenticateOAuth(ctx context.Context, provider Provider, prof
 				return nil, perr
 			}
 			return s.issueTokens(ctx, user, pw.WorkspaceID, pw.Role, client)
-		} else if !errors.Is(err, ErrNotFound) {
+		} else if !errorMap.IsInvalidInput(err) {
 			return nil, err
 		}
 	}
@@ -311,7 +301,7 @@ func (s *Service) AuthenticateOAuth(ctx context.Context, provider Provider, prof
 	// 3. New account — OAuth email is provider-verified, so mark verified.
 	tx, err := s.repo.Pool().Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Service: Begin Transaction", "could start transaction")
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
 
@@ -327,7 +317,7 @@ func (s *Service) AuthenticateOAuth(ctx context.Context, provider Provider, prof
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return nil, err
+		return nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Service: Commit Transaction", "error committing transaction")
 	}
 
 	return s.issueTokens(ctx, user, workspaceID, string(security.RoleOwner), client)
@@ -353,7 +343,7 @@ func (s *Service) provision(ctx context.Context, q Querier, user *User) (uuid.UU
 
 	apiKey, err := security.GenerateOpaqueToken(24)
 	if err != nil {
-		return uuid.Nil, err
+		return uuid.Nil, errorMap.Wrap(err, errorMap.CodeInternal, "Auth Service: Generate Opaque Token", "unable to generate tokens")
 	}
 	if err := s.repo.CreateAPIKey(ctx, q, projectID, "default", security.HashToken("gtra_"+apiKey)); err != nil {
 		return uuid.Nil, err

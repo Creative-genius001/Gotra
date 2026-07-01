@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gotra/gotra/internal/config"
+	errorMap "github.com/gotra/gotra/utils/error"
 )
 
 // OAuthProfile is the normalized identity returned by an external provider.
@@ -75,7 +76,7 @@ func (m *OAuthManager) creds(provider Provider) (config.OAuthConfig, error) {
 			RedirectURL:  m.cfg.OIDC.RedirectURL,
 		}, nil
 	default:
-		return config.OAuthConfig{}, ErrUnsupportedProvider
+		return config.OAuthConfig{}, errorMap.New(errorMap.CodeInvalidInput, "Oauth Service: Resolve Credentials", ErrUnsupportedProvider.Error())
 	}
 }
 
@@ -87,7 +88,7 @@ func (m *OAuthManager) resolveEndpoints(ctx context.Context, provider Provider) 
 	if provider == ProviderOIDC {
 		return m.discoverOIDC(ctx)
 	}
-	return providerEndpoints{}, ErrUnsupportedProvider
+	return providerEndpoints{}, errorMap.New(errorMap.CodeInvalidInput, "Oauth Service: Resolve Endpoints", ErrUnsupportedProvider.Error())
 }
 
 func (m *OAuthManager) discoverOIDC(ctx context.Context) (providerEndpoints, error) {
@@ -144,7 +145,8 @@ func (m *OAuthManager) AuthCodeURL(ctx context.Context, provider Provider, state
 		q.Set("access_type", "offline")
 		q.Set("prompt", "select_account")
 	}
-	return ep.authURL + "?" + q.Encode(), nil
+	url := ep.authURL + "?" + q.Encode()
+	return url, nil
 }
 
 // Exchange swaps an authorization code for an access token.
@@ -167,26 +169,27 @@ func (m *OAuthManager) Exchange(ctx context.Context, provider Provider, code str
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.tokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return "", errorMap.Wrap(err, errorMap.CodeInternal, "Oauth Service: Exchange", "error establishing connection")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := m.client.Do(req)
 	if err != nil {
-		return "", err
+		return "", errorMap.Wrap(err, errorMap.CodeInternal, "Oauth Service", "error creating connection")
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("oauth token exchange failed (%d): %s", resp.StatusCode, string(body))
+		errorMsg := fmt.Errorf("oauth token exchange failed (%d): %s", resp.StatusCode, string(body))
+		return "", errorMap.New(errorMap.CodeInvalidInput, "Oauth Service: Exchange", errorMsg.Error())
 	}
 
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &tok); err != nil || tok.AccessToken == "" {
-		return "", fmt.Errorf("oauth token response missing access_token")
+		return "", errorMap.New(errorMap.CodeInvalidInput, "Oauth Service: Unmarshall body", "oauth token response missing access_token")
 	}
 	return tok.AccessToken, nil
 }
@@ -205,7 +208,7 @@ func (m *OAuthManager) FetchProfile(ctx context.Context, provider Provider, acce
 		}
 		return m.fetchOIDC(ctx, ep.userinfoURL, accessToken)
 	default:
-		return nil, ErrUnsupportedProvider
+		return nil, errorMap.New(errorMap.CodeInvalidInput, "Oauth Service: Fetch Profile", ErrUnsupportedProvider.Error())
 	}
 }
 
